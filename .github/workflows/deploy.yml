@@ -1,0 +1,35 @@
+name: CI/CD to Kubernetes
+on:
+  push:
+    branches: [ "main" ]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+      - name: Iniciar sesión en Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Construir y subir imagen
+        run: |
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/web-dockerizada:${{ github.sha }} .
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/web-dockerizada:${{ github.sha }}
+      - name: Configurar kubectl
+        uses: azure/setup-kubectl@v3
+      - name: Configurar conexión a K8s
+        run: |
+          echo "${{ secrets.KUBE_CONFIG_DATA }}" | base64 --decode > kubeconfig
+          echo "KUBECONFIG=$PWD/kubeconfig" >> "$GITHUB_ENV"
+      - name: Desplegar en K8s
+        run: |
+          kubectl apply -f k8s/service.yaml
+          kubectl set image --local -f k8s/deployment.yaml \
+            webapp=docker.io/${{ secrets.DOCKERHUB_USERNAME }}/web-dockerizada:${{ github.sha }} -o yaml \
+            | kubectl apply -f -
+      - name: Verificar despliegue
+        run: |
+          kubectl rollout status deployment/webapp --timeout=120s
+          kubectl get pods -l app=webapp -o wide
